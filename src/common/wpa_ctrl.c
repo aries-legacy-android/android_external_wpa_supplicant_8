@@ -89,7 +89,9 @@ struct wpa_ctrl * wpa_ctrl_open(const char *ctrl_path)
 	int ret;
 	size_t res;
 	int tries = 0;
-	int flags;
+#ifdef ANDROID
+	char gb_path[128];
+#endif /* ANDROID */
 
 	if (ctrl_path == NULL)
 		return NULL;
@@ -152,25 +154,18 @@ try_again:
 		return ctrl;
 	}
 
-	/*
-	 * If the ctrl_path isn't an absolute pathname, assume that
-	 * it's the name of a socket in the Android reserved namespace.
-	 * Otherwise, it's a normal UNIX domain socket appearing in the
-	 * filesystem.
-	 */
+	/* GB's wifi.c falls back to a bare interface name when the control
+	 * directory is gone; no reserved namespace socket exists in this build. */
 	if (*ctrl_path != '/') {
-		char buf[21];
-		os_snprintf(buf, sizeof(buf), "wpa_%s", ctrl_path);
-		if (socket_local_client_connect(
-			    ctrl->s, buf,
-			    ANDROID_SOCKET_NAMESPACE_RESERVED,
-			    SOCK_DGRAM) < 0) {
+		ret = os_snprintf(gb_path, sizeof(gb_path), "%s/%s",
+				  CONFIG_CTRL_IFACE_DIR, ctrl_path);
+		if (ret < 0 || (size_t) ret >= sizeof(gb_path)) {
 			close(ctrl->s);
 			unlink(ctrl->local.sun_path);
 			os_free(ctrl);
 			return NULL;
 		}
-		return ctrl;
+		ctrl_path = gb_path;
 	}
 #endif /* ANDROID */
 
@@ -188,17 +183,21 @@ try_again:
 			return NULL;
 		}
 	}
-	if (connect(ctrl->s, (struct sockaddr *) &ctrl->dest,
-		    sizeof(ctrl->dest)) < 0) {
-		close(ctrl->s);
-		unlink(ctrl->local.sun_path);
-		os_free(ctrl);
-		return NULL;
+	/* init marks the service running before the control socket is bound. */
+	for (tries = 0; ; tries++) {
+		if (connect(ctrl->s, (struct sockaddr *) &ctrl->dest,
+			    sizeof(ctrl->dest)) == 0)
+			break;
+		if ((errno != ENOENT && errno != ECONNREFUSED) || tries >= 19) {
+			close(ctrl->s);
+			unlink(ctrl->local.sun_path);
+			os_free(ctrl);
+			return NULL;
+		}
+		os_sleep(0, 50000);
 	}
 
-	/* Gingerbread wifi.c treats EAGAIN on this socket as a dead supplicant. */
-	(void) flags;
-
+	/* GB's wifi.c reads EAGAIN as a dead supplicant, so keep blocking. */
 	return ctrl;
 }
 
@@ -542,7 +541,7 @@ static int wpa_ctrl_attach_helper(struct wpa_ctrl *ctrl, int attach)
 {
 	char buf[10];
 	int ret;
-	size_t len = 10;
+	size_t len = sizeof(buf) - 1;
 
 	ret = wpa_ctrl_request(ctrl, attach ? "ATTACH" : "DETACH", 6,
 			       buf, &len, NULL);
