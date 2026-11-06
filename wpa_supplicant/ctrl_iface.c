@@ -25,6 +25,11 @@
 #include "config.h"
 #include "wpa_supplicant_i.h"
 #include "driver_i.h"
+#ifdef ANDROID
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include "android_drv.h"
+#endif /* ANDROID */
 #include "wps_supplicant.h"
 #include "ibss_rsn.h"
 #include "ap.h"
@@ -1767,33 +1772,8 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_WPS */
 
-#ifdef ANDROID
-	/*
-	 * Allow using the STATUS command with default behavior, say for debug,
-	 * i.e., don't generate a "fake" CONNECTION and SUPPLICANT_STATE_CHANGE
-	 * events with STATUS-NO_EVENTS.
-	 */
-	if (os_strcmp(params, "-NO_EVENTS")) {
-		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_STATE_CHANGE
-			     "id=%d state=%d BSSID=" MACSTR " SSID=%s",
-			     wpa_s->current_ssid ? wpa_s->current_ssid->id : -1,
-			     wpa_s->wpa_state,
-			     MAC2STR(wpa_s->bssid),
-			     wpa_s->current_ssid && wpa_s->current_ssid->ssid ?
-			     wpa_ssid_txt(wpa_s->current_ssid->ssid,
-					  wpa_s->current_ssid->ssid_len) : "");
-		if (wpa_s->wpa_state == WPA_COMPLETED) {
-			struct wpa_ssid *ssid = wpa_s->current_ssid;
-			wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED
-				     "- connection to " MACSTR
-				     " completed %s [id=%d id_str=%s]",
-				     MAC2STR(wpa_s->bssid), "(auth)",
-				     ssid ? ssid->id : -1,
-				     ssid && ssid->id_str ? ssid->id_str : "");
-		}
-	}
-#endif /* ANDROID */
-
+	/* GB WifiStateTracker replies to a state event with another STATUS;
+	 * faking events here creates a feedback loop. */
 	return pos - buf;
 }
 
@@ -5637,10 +5617,78 @@ static int wpa_supplicant_pktcnt_poll(struct wpa_supplicant *wpa_s, char *buf,
 
 
 #ifdef ANDROID
+/* GB's WifiStateTracker toggles wlan0 through DRIVER START/STOP; there is no
+ * vendor private library to do it. */
+int gb_set_iface_up(const char *ifname, int up)
+{
+	int s;
+	struct ifreq ifr;
+
+	if (!ifname)
+		return -1;
+	s = socket(AF_INET, SOCK_DGRAM, 0);
+	if (s < 0)
+		return -1;
+	os_memset(&ifr, 0, sizeof(ifr));
+	os_strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+	if (ioctl(s, SIOCGIFFLAGS, &ifr) < 0) {
+		close(s);
+		return -1;
+	}
+	if (up)
+		ifr.ifr_flags |= IFF_UP;
+	else
+		ifr.ifr_flags &= ~IFF_UP;
+	if (ioctl(s, SIOCSIFFLAGS, &ifr) < 0) {
+		close(s);
+		return -1;
+	}
+	close(s);
+	return 0;
+}
+
+
 static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 				     char *buf, size_t buflen)
 {
 	int ret;
+
+	if (os_strcasecmp(cmd, "RSSI") == 0 ||
+	    os_strcasecmp(cmd, "RSSI-APPROX") == 0) {
+		struct wpa_signal_info si;
+		int level = -100;
+
+		/* The current BSS level is 0 until the AP is scanned again. */
+		if (wpa_s->driver && wpa_s->driver->signal_poll &&
+		    wpa_s->driver->signal_poll(wpa_s->drv_priv, &si) == 0)
+			level = si.current_signal;
+		else if (wpa_s->current_bss && wpa_s->current_bss->level)
+			level = wpa_s->current_bss->level;
+		return os_snprintf(buf, buflen, "%s rssi %d\n",
+				   wpa_s->ifname, level);
+	}
+	if (os_strcasecmp(cmd, "LINKSPEED") == 0)
+		return os_snprintf(buf, buflen, "LinkSpeed 54\n");
+	if (os_strcasecmp(cmd, "MACADDR") == 0)
+		return os_snprintf(buf, buflen, "Macaddr = " MACSTR "\n",
+				   MAC2STR(wpa_s->own_addr));
+	if (os_strcasecmp(cmd, "START") == 0) {
+		if (gb_set_iface_up(wpa_s->ifname, 1) < 0)
+			return -1;
+		/* GB waits for this event before reconnecting. */
+		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_DRIVER_STATE "STARTED");
+		return os_snprintf(buf, buflen, "OK\n");
+	}
+	if (os_strcasecmp(cmd, "STOP") == 0) {
+		if (gb_set_iface_up(wpa_s->ifname, 0) < 0)
+			return -1;
+		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_DRIVER_STATE "STOPPED");
+		return os_snprintf(buf, buflen, "OK\n");
+	}
+	if (os_strcasecmp(cmd, "SCAN-ACTIVE") == 0 ||
+	    os_strcasecmp(cmd, "SCAN-PASSIVE") == 0 ||
+	    os_strncasecmp(cmd, "RXFILTER", 8) == 0)
+		return os_snprintf(buf, buflen, "OK\n");
 
 	ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
 	if (ret == 0) {

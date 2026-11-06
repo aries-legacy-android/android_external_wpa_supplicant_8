@@ -3477,6 +3477,11 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 {
 	struct wpa_driver_capa capa;
 
+#ifdef ANDROID
+	/* A GB Wi-Fi toggle can leave wlan0 down at startup. */
+	gb_set_iface_up(iface->ifname, 1);
+#endif /* ANDROID */
+
 	wpa_printf(MSG_DEBUG, "Initializing interface '%s' conf '%s' driver "
 		   "'%s' ctrl_interface '%s' bridge '%s'", iface->ifname,
 		   iface->confname ? iface->confname : "N/A",

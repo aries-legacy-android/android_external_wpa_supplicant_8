@@ -196,18 +196,8 @@ try_again:
 		return NULL;
 	}
 
-	/*
-	 * Make socket non-blocking so that we don't hang forever if
-	 * target dies unexpectedly.
-	 */
-	flags = fcntl(ctrl->s, F_GETFL);
-	if (flags >= 0) {
-		flags |= O_NONBLOCK;
-		if (fcntl(ctrl->s, F_SETFL, flags) < 0) {
-			perror("fcntl(ctrl->s, O_NONBLOCK)");
-			/* Not fatal, continue on.*/
-		}
-	}
+	/* Gingerbread wifi.c treats EAGAIN on this socket as a dead supplicant. */
+	(void) flags;
 
 	return ctrl;
 }

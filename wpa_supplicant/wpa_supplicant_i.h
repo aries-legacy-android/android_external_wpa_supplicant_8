@@ -1012,4 +1012,18 @@ int get_shared_radio_freqs_data(struct wpa_supplicant *wpa_s,
 int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 			   int *freq_array, unsigned int len);
 
+#ifdef ANDROID
+/* Gingerbread WifiMonitor indexes SupplicantState with this number; 2.x
+ * inserted INTERFACE_DISABLED and AUTHENTICATING into the enum. */
+static inline int gb_supplicant_state(int state)
+{
+	static const int map[] = { 0, 0, 1, 2, 3, 3, 4, 5, 6, 7 };
+	if (state < 0 || state >= (int) ARRAY_SIZE(map))
+		return 0;
+	return map[state];
+}
+
+int gb_set_iface_up(const char *ifname, int up);
+#endif /* ANDROID */
+
 #endif /* WPA_SUPPLICANT_I_H */

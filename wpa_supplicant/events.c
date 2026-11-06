@@ -3346,6 +3346,11 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		break;
 	case EVENT_INTERFACE_DISABLED:
 		wpa_dbg(wpa_s, MSG_DEBUG, "Interface was disabled");
+#ifdef ANDROID
+		/* GB downs the interface in resetConnections() and may never
+		 * send DRIVER START afterwards. */
+		gb_set_iface_up(wpa_s->ifname, 1);
+#endif /* ANDROID */
 #ifdef CONFIG_P2P
 		if (wpa_s->p2p_group_interface == P2P_GROUP_INTERFACE_GO ||
 		    (wpa_s->current_ssid && wpa_s->current_ssid->p2p_group &&
@@ -3378,7 +3383,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		wpa_supplicant_mark_disassoc(wpa_s);
 		radio_remove_works(wpa_s, NULL, 0);
 
+#ifdef ANDROID
+		/* Staying DISCONNECTED avoids an up/down event loop; GB reacts to
+		 * a DISCONNECTED state change by downing the interface again. */
+		wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
+#else /* ANDROID */
 		wpa_supplicant_set_state(wpa_s, WPA_INTERFACE_DISABLED);
+#endif /* ANDROID */
 		break;
 	case EVENT_CHANNEL_LIST_CHANGED:
 		wpa_supplicant_update_channel_list(
