@@ -64,13 +64,9 @@ INCLUDES += $(LOCAL_PATH)/src/tls
 INCLUDES += $(LOCAL_PATH)/src/utils
 INCLUDES += $(LOCAL_PATH)/src/wps
 INCLUDES += external/openssl/include
-INCLUDES += system/security/keystore/include
 ifdef CONFIG_DRIVER_NL80211
-ifneq ($(wildcard external/libnl),)
-INCLUDES += external/libnl/include
-else
-INCLUDES += external/libnl-headers
-endif
+# Gingerbread has no libnl-headers; libnl_2 lives beside this tree.
+INCLUDES += $(LOCAL_PATH)/../../libnl/include
 endif
 
 ifdef CONFIG_FIPS
@@ -932,6 +928,8 @@ NEED_SHA256=y
 endif
 
 ifeq ($(CONFIG_TLS), openssl)
+# GB libcrypto is built without ENGINE.
+L_CFLAGS += -DOPENSSL_NO_ENGINE
 ifdef TLS_FUNCS
 L_CFLAGS += -DEAP_TLS_OPENSSL
 OBJS += src/crypto/tls_openssl.c
@@ -1547,7 +1545,7 @@ endif
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := wpa_cli
-LOCAL_MODULE_TAGS := debug
+LOCAL_MODULE_TAGS := optional
 LOCAL_SHARED_LIBRARIES := libc libcutils liblog
 LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_SRC_FILES := $(OBJS_c)
@@ -1569,14 +1567,12 @@ LOCAL_STATIC_LIBRARIES += $(LIB_STATIC_EAP_PROXY)
 LOCAL_SHARED_LIBRARIES += $(LIB_SHARED_EAP_PROXY)
 endif
 ifeq ($(CONFIG_TLS), openssl)
-LOCAL_SHARED_LIBRARIES += libcrypto libssl libkeystore_binder
+# Gingerbread has no keystore binder.
+LOCAL_SHARED_LIBRARIES += libcrypto libssl
 endif
 ifdef CONFIG_DRIVER_NL80211
-ifneq ($(wildcard external/libnl),)
-LOCAL_SHARED_LIBRARIES += libnl
-else
+# Link the static libnl_2 target; Gingerbread has no system libnl.
 LOCAL_STATIC_LIBRARIES += libnl_2
-endif
 endif
 LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_SRC_FILES := $(OBJS)
